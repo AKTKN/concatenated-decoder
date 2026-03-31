@@ -1,0 +1,71 @@
+{
+  "experiment": {
+    "circuit_from": "color-code-stim",
+    "circuit_style": "trioptimal_color_code_{basis}",
+    "circuit_options": {
+        "layout": "tri",
+        "superdense": false,
+        "temporal_boundary": "Z",
+        "perfect_state_prep": false,
+        "perfect_final_measurement": false,
+        "perfect_first_round": false,
+        "d2": "d"
+    },
+    "comparative_decoding": false,
+    "detailed_stats": {
+      "enabled": false,
+      "output_subdir": "detailed_stats",
+      "compression": "zstd"
+    },
+    "basis": "Z",
+    "distances": [3, 5],
+    "p_min": 0.001,
+    "p_max": 0.003,
+    "num_p": 1,
+    "p_scale": "linear",
+    "noise_model": "depolarizing",
+    "rounds": "d",
+    "convert_to_cz": false,
+    "shots": 10,
+    "shots_per_batch": 10,
+    "seed": 121,
+    "output_dir": "concatbp_outputs/memory_simulation",
+    "resume": true,
+    "verbose": true,
+    "workers": 2,
+    "plot_ler_unit": "both",
+    "plot_x_scale": "both",
+    "statistics": {
+      "enabled": true,
+      "method": "wilson",
+      "alpha": 0.01
+    }
+  },
+  "decoder": {
+    "strategy": "belief_matching", 
+    "colors": ["r", "g", "b"],
+    "color_selection_strategy": "all",
+    "do_post_selection": false,
+    "bp_method": "minimum_sum",
+    "schedule": "parallel",
+    "lsd_method": "LSD_0",
+    "lsd_order": 0,
+    "max_iter": 30,
+    "ms_scaling_factor": 0.8,
+    "relay_bp": {
+      "decoder_variant": "f32",
+      "gamma0": 0.35,
+      "pre_iter": 30,
+      "num_sets": 0,
+      "set_max_iter": 60,
+      "gamma_dist_interval": [-0.35, 0.8],
+      "stop_nconv": 1
+    },
+    "hybrid_two_stage": {
+      "enabled": false,
+      "stage2_graph_iter_threshold": 140,
+      "stage2_graph_decoder": "uf",
+      "detailed_stats": false
+    }
+  }
+}

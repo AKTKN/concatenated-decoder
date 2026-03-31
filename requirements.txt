@@ -1,0 +1,29 @@
+# concatbp runtime requirements (excluding Python stdlib)
+#
+# Notes:
+# - This list is derived from `concatbp/**.py` imports, plus a small amount of
+#   domain knowledge for dynamically-imported backends (e.g. color-code-stim).
+# - Some backends are optional depending on `experiment.circuit_from`.
+
+# Core numerics
+numpy
+scipy
+
+# Data I/O
+pandas
+pyarrow  # Parquet output for detailed stats
+maturin
+
+# Plotting
+matplotlib
+
+# QEC / decoding ecosystem
+stim
+pymatching
+ldpc
+relay-bp
+beliefmatching
+
+# Circuit-generation backends
+color-code-stim
+chromobius

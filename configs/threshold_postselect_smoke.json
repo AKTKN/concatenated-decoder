@@ -1,0 +1,66 @@
+{
+  "experiment": {
+    "circuit_from": "chromobius",
+    "circuit_style": "midout_color_code_{basis}",
+    "circuit_options": {
+      "layout": "tri",
+      "superdense": false,
+      "temporal_boundary": "Z",
+      "perfect_state_prep": false,
+      "perfect_final_measurement": false,
+      "perfect_first_round": false,
+      "enable_comparative_decoding": false
+    },
+    "basis": "Z",
+    "distances": [3],
+    "p_min": 0.001,
+    "p_max": 0.001,
+    "num_p": 1,
+    "p_scale": "linear",
+    "noise_model": "depolarizing",
+    "rounds": "d",
+    "shots": 200,
+    "shots_per_batch": 200,
+    "seed": 123,
+    "output_dir": "concatbp_outputs/postselect_smoke",
+    "resume": false,
+    "verbose": false,
+    "workers": 1,
+    "plot_ler_unit": "per_round",
+    "plot_x_scale": "linear",
+    "statistics": {
+      "enabled": true,
+      "method": "wilson",
+      "alpha": 0.01
+    }
+  },
+  "decoder": {
+    "strategy": "mwpm",
+    "colors": ["r", "g", "b"],
+
+    "color_selection_strategy": "all",
+    "do_post_selection": true,
+
+    "bp_method": "minimum_sum",
+    "schedule": "parallel",
+    "lsd_method": "LSD_0",
+    "lsd_order": 0,
+    "max_iter": 30,
+    "ms_scaling_factor": 0.8,
+    "relay_bp": {
+      "decoder_variant": "f32",
+      "gamma0": 0.35,
+      "pre_iter": 30,
+      "num_sets": 0,
+      "set_max_iter": 60,
+      "gamma_dist_interval": [-0.35, 0.8],
+      "stop_nconv": 1
+    },
+    "hybrid_two_stage": {
+      "enabled": false,
+      "stage2_graph_iter_threshold": 140,
+      "stage2_graph_decoder": "uf",
+      "detailed_stats": false
+    }
+  }
+}

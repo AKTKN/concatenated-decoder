@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+venv/
+.env/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Generated outputs (DO NOT COMMIT)
+concatbp_outputs/
+concatbp_circuits/
+
+# Large per-shot data and logs
+**/*.parquet
+**/*.feather
+**/*.arrow
+**/*.npz
+**/*.npy
+**/*.h5
+**/*.hdf5
+
+# Local scratch
+scratch/
+tmp/
+

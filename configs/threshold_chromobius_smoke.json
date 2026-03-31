@@ -1,0 +1,26 @@
+{
+  "experiment": {
+    "circuit_from": "chromobius",
+    "circuit_style": "superdense_color_code_{basis}",
+    "basis": "Z",
+    "distances": [3],
+    "p_values": [0.001],
+    "noise_model": "si1000",
+    "rounds": "d",
+    "shots": 100,
+    "shots_per_batch": 100,
+    "seed": 123,
+    "output_dir": "concatbp_outputs/threshold_chromobius_smoke",
+    "resume": false,
+    "verbose": true,
+    "workers": 1,
+    "plot_ler_unit": "per_round",
+    "plot_x_scale": "linear"
+  },
+  "decoder": {
+    "strategy": "chromobius",
+    "colors": ["r", "g", "b"],
+    "color_selection_strategy": "all",
+    "do_post_selection": false
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "experiment_name": "concat_mwpm_example",
+  "output_dir": "concatbp_outputs/concat_mwpm_example",
+  "distances": [3],
+  "physical_error_rates": [0.001],
+  "shots": 100,
+  "rounds": "d",
+  "circuit_type": "tri",
+  "workers": 1,
+  "base_seed": 42,
+  "decoder_variants": ["mwpm", "uf"],
+  "noise_model": {
+    "mode": "uniform_circuit_noise",
+    "rate_key": "depolarizing",
+    "fixed_kwargs": {}
+  },
+  "color_code_kwargs": {},
+  "bplsd_prior_boost_factor": 50.0,
+  "overwrite_outputs": true
+}

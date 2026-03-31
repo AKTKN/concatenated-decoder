@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "concatbp"
+version = "0.1.0"
+description = "Concatenated BP-style decoding experiments and utilities (config-driven)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "concatbp contributors" }]
+license = { text = "Proprietary (set an OSS license before public release)" }
+
+# Keep this list conservative; full cluster env is in requirements.txt.
+dependencies = [
+  "numpy",
+  "scipy",
+  "stim",
+]
+
+[project.optional-dependencies]
+full = [
+  "pandas",
+  "pyarrow",
+  "matplotlib",
+  "pymatching",
+  "ldpc",
+  "relay-bp",
+  "beliefmatching",
+  "color-code-stim",
+  "chromobius",
+]
+
+dev = [
+  "pytest",
+  "ruff",
+  "mypy",
+  "maturin",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+

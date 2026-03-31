@@ -1,0 +1,26 @@
+{
+  "experiment": {
+    "circuit_style": "superdense_color_code_{basis}",
+    "basis": "Z",
+    "distances": [3, 5, 7],
+    "p_min": 0.01,
+    "p_max": 0.1,
+    "num_p": 5,
+    "noise_model": "depolarizing",
+    "rounds": "4d",
+    "shots": 1000,
+    "shots_per_batch": 250,
+    "seed": 17,
+    "output_dir": "concatbp_outputs/threshold_rounds_expr_example",
+    "resume": true
+  },
+  "decoder": {
+    "colors": ["r", "g", "b"],
+    "bp_method": "minimum_sum",
+    "schedule": "parallel",
+    "lsd_method": "LSD_0",
+    "lsd_order": 0,
+    "max_iter": 30,
+    "ms_scaling_factor": 0.75
+  }
+}
