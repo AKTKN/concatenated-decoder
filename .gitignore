@@ -23,6 +23,10 @@ venv/
 # Generated outputs (DO NOT COMMIT)
 concatbp_outputs/
 concatbp_circuits/
+cluster/
+configs/cluster_memory_simulation.json
+pbs/
+ldpc/
 
 # Large per-shot data and logs
 **/*.parquet

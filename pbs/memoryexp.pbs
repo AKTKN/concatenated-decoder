@@ -1,21 +1,20 @@
 #!/bin/bash
-#PBS -N concatbp_memoryexp
-#PBS -l select=1:ncpus=8:mem=32gb
-#PBS -l walltime=12:00:00
-#PBS -j oe
-
+#PBS -l nodes=1:ppn=96
+#PBS -N rec_concatmwpm
+#PBS -o /home/u592165f/workplace/concatenated-decoder/cluster/outputs/out
+#PBS -e /home/u592165f/workplace/concatenated-decoder/cluster/outputs/err
+ulimit -s unlimited
 set -euo pipefail
 
-# Optional: load modules / activate env
-# module load python/3.11
-# source /path/to/venv/bin/activate
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate concat_decoder
 
 cd "$PBS_O_WORKDIR"
 
-CONFIG="configs/memory_simulation.json"
+CONFIG="configs/cluster_memory_simulation.json"
 SHOTS=""
 BATCH=""
-WORKERS="8"
+WORKERS="96"
 QUIET="quiet"
 
 bash scripts/run_memoryexp.sh "$CONFIG" "$SHOTS" "$BATCH" "$WORKERS" "$QUIET"

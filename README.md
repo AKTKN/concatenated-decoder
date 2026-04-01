@@ -1,9 +1,5 @@
-# concatbp
-
-Config-driven quantum memory experiments and decoder evaluation.
-
-This repository is structured to be *git-clone + qsub friendly* on a PBS cluster.
-Large experiment outputs (especially when detailed stats are enabled) are intentionally excluded from git.
+# Concatenated Decoders for color code
+Various concatenated decoding strategy is implemented based on concatenated matching decoder proposed in [Color code decoder with improved scaling for correcting circuit-level noise](https://quantum-journal.org/papers/q-2025-01-27-1609/)
 
 ## Quick start (local)
 
