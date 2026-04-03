@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from pathlib import Path
 import os
 import stim
@@ -480,17 +480,34 @@ def run_threshold_experiment(
             if cfg.verbose: print(f"[{i}/{len(tasks)}] d={task.distance} p={task.p:.6g}")
     else:
         mp_context = mp.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
-            futures = {executor.submit(_run_threshold_task, task, cfg, decoder_cfg): task for task in tasks}
+        executor = ProcessPoolExecutor(max_workers=workers, mp_context=mp_context)
+        futures: dict[Future[_ThresholdTaskResult], _ThresholdTask] = {}
+        task_iter = iter(tasks)
+        try:
+            for _ in range(min(workers, len(tasks))):
+                initial_task = next(task_iter, None)
+                if initial_task is None:
+                    break
+                futures[executor.submit(_run_threshold_task, initial_task, cfg, decoder_cfg)] = initial_task
+
             done = 0
-            for future in as_completed(futures):
-                task_result = future.result()
-                rows.append(task_result.point)
-                detailed_stats_rows.extend(task_result.detailed_stats)
-                done += 1
-                if cfg.verbose:
-                    t = futures[future]
-                    print(f"[{done}/{len(tasks)}] d={t.distance} p={t.p:.6g}")
+            while futures:
+                completed_futures, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for future in completed_futures:
+                    completed_task = futures.pop(future)
+                    task_result = future.result()
+                    rows.append(task_result.point)
+                    detailed_stats_rows.extend(task_result.detailed_stats)
+                    done += 1
+                    if cfg.verbose:
+                        print(f"[{done}/{len(tasks)}] d={completed_task.distance} p={completed_task.p:.6g}")
+                    try:
+                        next_task = next(task_iter)
+                        futures[executor.submit(_run_threshold_task, next_task, cfg, decoder_cfg)] = next_task
+                    except StopIteration:
+                        pass
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
 
     all_rows = merge_existing_rows(out_dir / "threshold_results.csv", rows)
     write_threshold_csv(all_rows, out_dir / "threshold_results.csv")
