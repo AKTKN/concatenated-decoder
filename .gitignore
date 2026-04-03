@@ -27,6 +27,8 @@ cluster/
 configs/cluster_memory_simulation.json
 pbs/
 ldpc/
+cluster_outputs/
+analysis/
 
 # Large per-shot data and logs
 **/*.parquet
