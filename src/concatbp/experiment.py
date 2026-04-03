@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from pathlib import Path
 import os
 import stim
@@ -481,7 +481,7 @@ def run_threshold_experiment(
     else:
         mp_context = mp.get_context("spawn")
         executor = ProcessPoolExecutor(max_workers=workers, mp_context=mp_context)
-        futures: dict[Any, _ThresholdTask] = {}
+        futures: dict[Future[_ThresholdTaskResult], _ThresholdTask] = {}
         task_iter = iter(tasks)
         try:
             for _ in range(min(workers, len(tasks))):
@@ -500,9 +500,9 @@ def run_threshold_experiment(
                     print(f"[{done}/{len(tasks)}] d={completed_task.distance} p={completed_task.p:.6g}")
                 try:
                     next_task = next(task_iter)
+                    futures[executor.submit(_run_threshold_task, next_task, cfg, decoder_cfg)] = next_task
                 except StopIteration:
                     continue
-                futures[executor.submit(_run_threshold_task, next_task, cfg, decoder_cfg)] = next_task
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
 
