@@ -491,7 +491,7 @@ def run_threshold_experiment(
             done = 0
             while futures:
                 completed_futures, _ = wait(futures, return_when=FIRST_COMPLETED)
-                future = completed_futures.pop()
+                future = next(iter(completed_futures))
                 completed_task = futures.pop(future)
                 task_result = future.result()
                 rows.append(task_result.point)
@@ -503,7 +503,7 @@ def run_threshold_experiment(
                     next_task = next(task_iter)
                     futures[executor.submit(_run_threshold_task, next_task, cfg, decoder_cfg)] = next_task
                 except StopIteration:
-                    continue
+                    pass
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
 
