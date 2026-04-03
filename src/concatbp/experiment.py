@@ -485,27 +485,25 @@ def run_threshold_experiment(
         task_iter = iter(tasks)
         try:
             for _ in range(min(workers, len(tasks))):
-                t = next(task_iter)
-                futures[executor.submit(_run_threshold_task, t, cfg, decoder_cfg)] = t
+                initial_task = next(task_iter)
+                futures[executor.submit(_run_threshold_task, initial_task, cfg, decoder_cfg)] = initial_task
 
             done = 0
             while futures:
                 future = next(as_completed(futures))
-                t = futures.pop(future)
+                completed_task = futures.pop(future)
                 task_result = future.result()
                 rows.append(task_result.point)
                 detailed_stats_rows.extend(task_result.detailed_stats)
                 done += 1
                 if cfg.verbose:
-                    print(f"[{done}/{len(tasks)}] d={t.distance} p={t.p:.6g}")
+                    print(f"[{done}/{len(tasks)}] d={completed_task.distance} p={completed_task.p:.6g}")
                 try:
                     next_task = next(task_iter)
                 except StopIteration:
                     continue
                 futures[executor.submit(_run_threshold_task, next_task, cfg, decoder_cfg)] = next_task
         finally:
-            for future in futures:
-                future.cancel()
             executor.shutdown(wait=True, cancel_futures=True)
 
     all_rows = merge_existing_rows(out_dir / "threshold_results.csv", rows)
