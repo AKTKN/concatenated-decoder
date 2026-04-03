@@ -485,25 +485,27 @@ def run_threshold_experiment(
         task_iter = iter(tasks)
         try:
             for _ in range(min(workers, len(tasks))):
-                initial_task = next(task_iter)
+                initial_task = next(task_iter, None)
+                if initial_task is None:
+                    break
                 futures[executor.submit(_run_threshold_task, initial_task, cfg, decoder_cfg)] = initial_task
 
             done = 0
             while futures:
                 completed_futures, _ = wait(futures, return_when=FIRST_COMPLETED)
-                future = next(iter(completed_futures))
-                completed_task = futures.pop(future)
-                task_result = future.result()
-                rows.append(task_result.point)
-                detailed_stats_rows.extend(task_result.detailed_stats)
-                done += 1
-                if cfg.verbose:
-                    print(f"[{done}/{len(tasks)}] d={completed_task.distance} p={completed_task.p:.6g}")
-                try:
-                    next_task = next(task_iter)
-                    futures[executor.submit(_run_threshold_task, next_task, cfg, decoder_cfg)] = next_task
-                except StopIteration:
-                    pass
+                for future in completed_futures:
+                    completed_task = futures.pop(future)
+                    task_result = future.result()
+                    rows.append(task_result.point)
+                    detailed_stats_rows.extend(task_result.detailed_stats)
+                    done += 1
+                    if cfg.verbose:
+                        print(f"[{done}/{len(tasks)}] d={completed_task.distance} p={completed_task.p:.6g}")
+                    try:
+                        next_task = next(task_iter)
+                        futures[executor.submit(_run_threshold_task, next_task, cfg, decoder_cfg)] = next_task
+                    except StopIteration:
+                        pass
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
 
