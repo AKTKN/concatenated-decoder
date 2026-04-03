@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from pathlib import Path
 import os
 import stim
@@ -490,7 +490,8 @@ def run_threshold_experiment(
 
             done = 0
             while futures:
-                future = next(as_completed(futures))
+                completed_futures, _ = wait(futures, return_when=FIRST_COMPLETED)
+                future = completed_futures.pop()
                 completed_task = futures.pop(future)
                 task_result = future.result()
                 rows.append(task_result.point)
