@@ -98,6 +98,7 @@ class ComparativeDecodeResult:
     candidate_stage1_costs: dict[str, np.ndarray]
     decode_time_ms: np.ndarray
     logical_gap: np.ndarray
+    iterations: np.ndarray | None = None
 
 
 def decode_batch_comparative(
@@ -135,6 +136,7 @@ def decode_batch_comparative(
 
     weights = np.full((num_classes, num_colors, num_shots), np.nan, dtype=np.float64)
     s1_weights = np.full((num_classes, num_colors, num_shots), np.nan, dtype=np.float64)
+    iterations_by_class = np.full((num_classes, num_shots), np.nan, dtype=np.float64)
 
     decode_time_total = np.zeros(num_shots, dtype=np.float64)
 
@@ -151,6 +153,9 @@ def decode_batch_comparative(
 
         if res.candidate_stage1_costs is None:
             raise ValueError("Decoder did not return candidate_stage1_costs; required for detailed stats.")
+
+        if res.iterations is not None:
+            iterations_by_class[i, :] = np.asarray(res.iterations, dtype=np.float64).reshape(-1)[:num_shots]
 
         for c_idx, c in enumerate(color_list):
             if c not in res.candidate_costs:
@@ -170,6 +175,8 @@ def decode_batch_comparative(
 
     shot_idx = np.arange(num_shots, dtype=np.int64)
     obs_pred = classes[best_logical_class].astype(np.uint8, copy=False)
+    selected_iterations = iterations_by_class[best_logical_class, shot_idx]
+    out_iterations = selected_iterations if np.any(np.isfinite(selected_iterations)) else None
 
     # Fix per-color weights to the selected logical class per shot.
     out_costs: dict[str, np.ndarray] = {}
@@ -184,4 +191,5 @@ def decode_batch_comparative(
         candidate_stage1_costs=out_s1,
         decode_time_ms=decode_time_total,
         logical_gap=logical_gap,
+        iterations=out_iterations,
     )

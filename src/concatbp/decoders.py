@@ -232,6 +232,8 @@ class DecodeBatchResult:
     decode_time_ms: np.ndarray | None = None
     # Optional per-shot logical gap (comparative decoding only).
     logical_gap: np.ndarray | None = None
+    # Optional per-shot iteration count (relay_bp strategy).
+    iterations: np.ndarray | None = None
     detailed_stats: list[dict[str, int | float | str]] | None = None
     abort_mask: np.ndarray | None = None
 
@@ -513,6 +515,8 @@ class BaseConcatDecoder(ABC):
 
         # Total decode time per unique syndrome (ms), aggregated across evaluated colors.
         decode_time_unique_ms = np.zeros(num_unique, dtype=np.float64)
+        # Optional selected-candidate iteration count per unique syndrome.
+        iterations_unique: np.ndarray | None = None
 
         need_postselect = bool(getattr(self.cfg, "do_post_selection", False)) and len(colors) >= 2
 
@@ -548,11 +552,19 @@ class BaseConcatDecoder(ABC):
                     stage1_bp_stats_seen = True
                     stage1_bp_failed_unique[str(c)][i] = 1 if int(stats["stage1_bp_failed"]) else 0
 
+                shot_iteration: float | None = None
+                if "iteration" in stats:
+                    if iterations_unique is None:
+                        iterations_unique = np.full(num_unique, np.nan, dtype=np.float64)
+                    shot_iteration = float(stats["iteration"])  # type: ignore[arg-type]
+
                 all_costs_unique[str(c)][i] = total_cost
                 if total_cost < best_cost_unique[i]:
                     best_cost_unique[i] = total_cost
                     best_obs_unique[i] = obs2
                     best_color_unique[i] = int(color_to_index[str(c)])
+                    if iterations_unique is not None and shot_iteration is not None:
+                        iterations_unique[i] = shot_iteration
 
         # Aggregate Stage-1 BP non-convergence statistics weighted by shot multiplicity.
         if stage1_bp_stats_seen:
@@ -587,6 +599,7 @@ class BaseConcatDecoder(ABC):
         candidate_obs = {c: candidate_obs_unique[c][inverse] for c in colors}
         candidate_stage1_costs = {c: all_stage1_costs_unique[c][inverse] for c in colors}
         decode_time_ms = decode_time_unique_ms[inverse]
+        iterations = iterations_unique[inverse] if iterations_unique is not None else None
 
         return DecodeBatchResult(
             obs_prediction=best_obs,
@@ -594,6 +607,7 @@ class BaseConcatDecoder(ABC):
             candidate_stage1_costs=candidate_stage1_costs,
             candidate_obs=candidate_obs,
             decode_time_ms=decode_time_ms,
+            iterations=iterations,
             detailed_stats=None,
             abort_mask=abort_mask,
         )
@@ -692,6 +706,7 @@ class ConcatRelayBPDecoder(BaseConcatDecoder):
             "stage1_converged": int(res1.converged),
             "stage2_converged": int(res2.converged),
             "stage1_weight": float(res1.cost),
+            "iteration": int(res1.iterations) + int(res2.iterations),
             "decode_time_ms": (time.perf_counter() - t0) * 1000.0,
         }
         
@@ -879,6 +894,7 @@ class ConcatBeliefConcatMWPMDecoder:
         if not self.detector_basis_by_id:
             raise ValueError("detector_basis_by_id must be provided for belief_concatmwpm.")
 
+        self._bp_only = bool(getattr(getattr(cfg, "belief_concatmwpm", None), "bp_only", False))
         self._full_bp = _RelayBPStageDecoder(base_model, cfg)
         self._debug_attempted_shots = 0
         self._debug_failed_shots = 0
@@ -895,14 +911,16 @@ class ConcatBeliefConcatMWPMDecoder:
 
         best_obs_unique = np.zeros((num_unique, self.base_model.num_observables), dtype=np.uint8)
         best_cost_unique = np.full(num_unique, np.inf, dtype=np.float64)
+        iterations_unique = np.full(num_unique, np.nan, dtype=np.float64)
         bp_failed_unique = np.zeros(num_unique, dtype=np.uint8)
         abort_unique = np.zeros(num_unique, dtype=bool)
 
         for i in range(num_unique):
             syn_global = unique_dets[i]
             bp_res = self._full_bp.decode_detailed(syn_global)
+            iterations_unique[i] = float(bp_res.iterations)
 
-            if bp_res.converged:
+            if self._bp_only or bp_res.converged:
                 best_obs_unique[i] = np.asarray(bp_res.observables_prediction, dtype=np.uint8).ravel()
                 best_cost_unique[i] = float(bp_res.cost)
                 continue
@@ -938,7 +956,13 @@ class ConcatBeliefConcatMWPMDecoder:
         best_obs = best_obs_unique[inverse]
         candidate_costs = {"belief_concatmwpm": best_cost_unique[inverse]}
         abort_mask = abort_unique[inverse] if bool(getattr(self.cfg, "do_post_selection", False)) else None
-        return DecodeBatchResult(obs_prediction=best_obs, candidate_costs=candidate_costs, detailed_stats=None, abort_mask=abort_mask)
+        return DecodeBatchResult(
+            obs_prediction=best_obs,
+            candidate_costs=candidate_costs,
+            iterations=iterations_unique[inverse],
+            detailed_stats=None,
+            abort_mask=abort_mask,
+        )
 
     def print_stage1_bp_summary(self, *, tag: str | None = None) -> None:
         if not bool(getattr(self.cfg, "debug_print_stage1_bp_summary", False)):

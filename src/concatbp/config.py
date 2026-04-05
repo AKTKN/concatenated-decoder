@@ -108,6 +108,13 @@ class RelayBPConfig:
 
 
 @dataclass(frozen=True)
+class BeliefConcatMWPMConfig:
+    # If True, do not run Concat MWPM fallback when full-DEM Relay-BP does not converge.
+    # The BP decoding result is used as-is.
+    bp_only: bool = False
+
+
+@dataclass(frozen=True)
 class HybridTwoStageConfig:
     enabled: bool = False
     stage2_graph_iter_threshold: int = 12
@@ -177,6 +184,7 @@ class DecoderConfig:
     max_iter: int = 30
     ms_scaling_factor: float = 0.75
     relay_bp: RelayBPConfig = field(default_factory=RelayBPConfig)
+    belief_concatmwpm: BeliefConcatMWPMConfig = field(default_factory=BeliefConcatMWPMConfig)
     hybrid_two_stage: HybridTwoStageConfig = field(default_factory=HybridTwoStageConfig)
 
     @staticmethod
@@ -228,6 +236,7 @@ class DecoderConfig:
         raw["schedule"] = sched
 
         relay_raw = dict(raw.pop("relay_bp", {}))
+        belief_concatmwpm_raw = dict(raw.pop("belief_concatmwpm", {}))
         hybrid_raw = dict(raw.pop("hybrid_two_stage", {}))
 
         relay = RelayBPConfig(
@@ -239,6 +248,10 @@ class DecoderConfig:
             set_max_iter=int(relay_raw.get("set_max_iter", 60)),
             gamma_dist_interval=tuple(relay_raw.get("gamma_dist_interval", (-0.24, 0.66))),
             stop_nconv=int(relay_raw.get("stop_nconv", 1)),
+        )
+
+        belief_concatmwpm = BeliefConcatMWPMConfig(
+            bp_only=bool(belief_concatmwpm_raw.get("bp_only", False)),
         )
 
         hybrid = HybridTwoStageConfig(
@@ -253,7 +266,12 @@ class DecoderConfig:
             debug_dump_max_shots=int(hybrid_raw.get("debug_dump_max_shots", 8)),
         )
         
-        return DecoderConfig(**raw, relay_bp=relay, hybrid_two_stage=hybrid)
+        return DecoderConfig(
+            **raw,
+            relay_bp=relay,
+            belief_concatmwpm=belief_concatmwpm,
+            hybrid_two_stage=hybrid,
+        )
 
 
 @dataclass(frozen=True)

@@ -50,7 +50,10 @@ def shot_stats_columns() -> list[tuple[str, np.dtype]]:
     """Column definitions for shot-level detailed stats."""
     return [
         ("shot_index", np.dtype(np.int64)),
+        ("logical_error", np.dtype(np.bool_)),
+        ("num_errors", np.dtype(np.int64)),
         ("decode_time_ms", np.dtype(np.float64)),
+        ("iteration", np.dtype(np.float64)),
         ("r_weight", np.dtype(np.float64)),
         ("g_weight", np.dtype(np.float64)),
         ("b_weight", np.dtype(np.float64)),
@@ -68,7 +71,10 @@ def _shot_stats_schema():
     # Use explicit types for stable output schema.
     fields = [
         pa.field("shot_index", pa.int64()),
+        pa.field("logical_error", pa.bool_()),
+        pa.field("num_errors", pa.int64()),
         pa.field("decode_time_ms", pa.float64()),
+        pa.field("iteration", pa.float64()),
         pa.field("r_weight", pa.float64()),
         pa.field("g_weight", pa.float64()),
         pa.field("b_weight", pa.float64()),
@@ -110,7 +116,10 @@ class ShotStatsParquetWriter:
         self,
         *,
         shot_index: np.ndarray,
+        logical_error: np.ndarray,
+        num_errors: np.ndarray,
         decode_time_ms: np.ndarray,
+        iteration: np.ndarray,
         r_weight: np.ndarray,
         g_weight: np.ndarray,
         b_weight: np.ndarray,
@@ -128,7 +137,10 @@ class ShotStatsParquetWriter:
 
         cols: dict[str, np.ndarray] = {
             "shot_index": np.asarray(shot_index, dtype=np.int64).ravel(),
+            "logical_error": np.asarray(logical_error, dtype=np.bool_).ravel(),
+            "num_errors": np.asarray(num_errors, dtype=np.int64).ravel(),
             "decode_time_ms": np.asarray(decode_time_ms, dtype=np.float64).ravel(),
+            "iteration": np.asarray(iteration, dtype=np.float64).ravel(),
             "r_weight": np.asarray(r_weight, dtype=np.float64).ravel(),
             "g_weight": np.asarray(g_weight, dtype=np.float64).ravel(),
             "b_weight": np.asarray(b_weight, dtype=np.float64).ravel(),

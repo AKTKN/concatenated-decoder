@@ -150,10 +150,10 @@ def _run_threshold_task(
             raise ValueError("comparative_decoding does not support decoder.do_post_selection")
 
     if detailed_enabled:
-        # Shot-level detailed stats require per-color candidate weights and stage-1 weights.
-        if strategy_norm in {"chromobius", "belief_concatmwpm"}:
+        # chromobius does not expose the per-color internals needed by concatbp detailed stats.
+        if strategy_norm in {"chromobius"}:
             raise ValueError(
-                "experiment.detailed_stats is not supported for decoder.strategy='chromobius' or 'belief_concatmwpm'"
+                "experiment.detailed_stats is not supported for decoder.strategy='chromobius'"
             )
 
     circuit_cfg = CircuitConfig(
@@ -204,7 +204,16 @@ def _run_threshold_task(
         debug_run_tag=debug_run_tag,
     )
 
-    sampler = built.circuit.compile_detector_sampler(seed=int(task.seed))
+    sampler = None
+    dem_sampler = None
+    if detailed_enabled:
+        # Detailed stats also require sampled error-mechanism vectors.
+        try:
+            dem_sampler = dem.compile_sampler(seed=int(task.seed))
+        except TypeError:
+            dem_sampler = dem.compile_sampler()
+    else:
+        sampler = built.circuit.compile_detector_sampler(seed=int(task.seed))
     mismatch_count = 0
     post_mismatch_count = 0
     abort_count = 0
@@ -245,9 +254,22 @@ def _run_threshold_task(
     try:
         while processed < cfg.shots:
             n = min(batch_size, cfg.shots - processed)
-            det_outcomes, obs_true = sampler.sample(shots=n, separate_observables=True, bit_packed=False)
+            if dem_sampler is not None:
+                det_outcomes, obs_true, sampled_errors = dem_sampler.sample(
+                    shots=n,
+                    bit_packed=False,
+                    return_errors=True,
+                )
+                if sampled_errors is None:
+                    raise ValueError("DEM sampler did not return error vectors with return_errors=True")
+                num_errors = np.count_nonzero(np.asarray(sampled_errors, dtype=np.uint8), axis=1).astype(np.int64, copy=False)
+            else:
+                assert sampler is not None
+                det_outcomes, obs_true = sampler.sample(shots=n, separate_observables=True, bit_packed=False)
+                num_errors = np.zeros(n, dtype=np.int64)
 
             obs_true_u8 = np.asarray(obs_true, dtype=np.uint8)
+            result = None
 
             if comparative:
                 assert obs_det_ids_by_obs is not None
@@ -260,6 +282,11 @@ def _run_threshold_task(
                 obs_pred_u8 = np.asarray(comp_res.obs_prediction, dtype=np.uint8)
                 decode_time_ms = np.asarray(comp_res.decode_time_ms, dtype=np.float64).reshape(-1)[:n]
                 logical_gap = np.asarray(comp_res.logical_gap, dtype=np.float64).reshape(-1)[:n]
+                iteration = (
+                    np.asarray(comp_res.iterations, dtype=np.float64).reshape(-1)[:n]
+                    if comp_res.iterations is not None
+                    else np.full(n, np.nan, dtype=np.float64)
+                )
                 per_color_costs = comp_res.candidate_costs
                 per_color_s1 = comp_res.candidate_stage1_costs
             else:
@@ -271,9 +298,12 @@ def _run_threshold_task(
                     else np.full(n, np.nan, dtype=np.float64)
                 )
                 logical_gap = np.full(n, np.nan, dtype=np.float64)
+                iteration = (
+                    np.asarray(result.iterations, dtype=np.float64).reshape(-1)[:n]
+                    if result.iterations is not None
+                    else np.full(n, np.nan, dtype=np.float64)
+                )
                 per_color_costs = result.candidate_costs
-                if result.candidate_stage1_costs is None:
-                    raise ValueError("Decoder did not return candidate_stage1_costs")
                 per_color_s1 = result.candidate_stage1_costs
 
             np.bitwise_xor(obs_true_u8, obs_pred_u8, out=xor_buf[:n, :])
@@ -287,6 +317,8 @@ def _run_threshold_task(
                 and str(decoder_cfg.strategy).strip().lower() != "chromobius"
             )
             if do_postselect:
+                if result is None:
+                    raise ValueError("Post-selection requires non-comparative decode results")
                 if result.abort_mask is None:
                     # No abort information => no shots aborted.
                     post_shots += int(n)
@@ -303,16 +335,20 @@ def _run_threshold_task(
             # Shot-level detailed stats (streaming to parquet).
             if writer is not None:
                 expected = ("r", "g", "b")
-                for c in expected:
-                    if c not in per_color_costs or c not in per_color_s1:
-                        raise ValueError(f"Decoder missing per-color stats for color={c!r}")
+                def _metric_or_nan(
+                    metric_map: dict[str, np.ndarray] | None,
+                    color: str,
+                ) -> np.ndarray:
+                    if metric_map is None or color not in metric_map:
+                        return np.full(n, np.nan, dtype=np.float64)
+                    return np.asarray(metric_map[color], dtype=np.float64).reshape(-1)[:n]
 
-                r_w = np.asarray(per_color_costs["r"], dtype=np.float64).reshape(-1)[:n]
-                g_w = np.asarray(per_color_costs["g"], dtype=np.float64).reshape(-1)[:n]
-                b_w = np.asarray(per_color_costs["b"], dtype=np.float64).reshape(-1)[:n]
-                s1_r = np.asarray(per_color_s1["r"], dtype=np.float64).reshape(-1)[:n]
-                s1_g = np.asarray(per_color_s1["g"], dtype=np.float64).reshape(-1)[:n]
-                s1_b = np.asarray(per_color_s1["b"], dtype=np.float64).reshape(-1)[:n]
+                r_w = _metric_or_nan(per_color_costs, "r")
+                g_w = _metric_or_nan(per_color_costs, "g")
+                b_w = _metric_or_nan(per_color_costs, "b")
+                s1_r = _metric_or_nan(per_color_s1, "r")
+                s1_g = _metric_or_nan(per_color_s1, "g")
+                s1_b = _metric_or_nan(per_color_s1, "b")
 
                 if comparative:
                     # In comparative decoding, weights are fixed to the chosen logical class;
@@ -322,32 +358,40 @@ def _run_threshold_task(
                     g_w = g_w * sign
                     b_w = b_w * sign
                 else:
-                    # In non-comparative decoding, sign each color based on that color's
-                    # candidate observable prediction.
-                    if result.candidate_obs is None:
-                        raise ValueError("Decoder did not return candidate_obs")
-                    sign_r = np.where(
-                        np.any(result.candidate_obs["r"][:n, :] != obs_true_u8[:n, :], axis=1),
-                        -1.0,
-                        1.0,
-                    )
-                    sign_g = np.where(
-                        np.any(result.candidate_obs["g"][:n, :] != obs_true_u8[:n, :], axis=1),
-                        -1.0,
-                        1.0,
-                    )
-                    sign_b = np.where(
-                        np.any(result.candidate_obs["b"][:n, :] != obs_true_u8[:n, :], axis=1),
-                        -1.0,
-                        1.0,
-                    )
+                    # In non-comparative decoding, prefer per-color signing from candidate
+                    # observables when available; otherwise fall back to the final mismatch flag.
+                    sign_global = np.where(mismatch_flags, -1.0, 1.0).astype(np.float64, copy=False)
+                    sign_r = sign_global
+                    sign_g = sign_global
+                    sign_b = sign_global
+                    if result is not None and result.candidate_obs is not None:
+                        cand_obs = result.candidate_obs
+                        if all(c in cand_obs for c in expected):
+                            sign_r = np.where(
+                                np.any(cand_obs["r"][:n, :] != obs_true_u8[:n, :], axis=1),
+                                -1.0,
+                                1.0,
+                            )
+                            sign_g = np.where(
+                                np.any(cand_obs["g"][:n, :] != obs_true_u8[:n, :], axis=1),
+                                -1.0,
+                                1.0,
+                            )
+                            sign_b = np.where(
+                                np.any(cand_obs["b"][:n, :] != obs_true_u8[:n, :], axis=1),
+                                -1.0,
+                                1.0,
+                            )
                     r_w = r_w * sign_r
                     g_w = g_w * sign_g
                     b_w = b_w * sign_b
 
                 writer.write_batch(
                     shot_index=(processed + np.arange(n, dtype=np.int64)),
+                    logical_error=mismatch_flags,
+                    num_errors=num_errors,
                     decode_time_ms=decode_time_ms,
+                    iteration=iteration,
                     r_weight=r_w,
                     g_weight=g_w,
                     b_weight=b_w,
