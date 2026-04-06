@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CONFIG="${1:-${PROJECT_ROOT}/configs/memory_simulation.json}"
+CONFIG="${1:-${PROJECT_ROOT}/configs/exhaustive_check.json}"
 SHOTS_OVERRIDE="${2:-}"
 BATCH_OVERRIDE="${3:-}"
 WORKERS_OVERRIDE="${4:-}"

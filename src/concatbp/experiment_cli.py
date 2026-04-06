@@ -75,13 +75,38 @@ def main() -> None:
         or args.workers is not None
         or args.quiet
     ):
-        exp_cfg = replace(
-            exp_cfg,
-            **({"shots": int(args.shots)} if args.shots is not None else {}),
-            **({"shots_per_batch": int(args.shots_per_batch)} if args.shots_per_batch is not None else {}),
-            **({"workers": int(args.workers)} if args.workers is not None else {}),
-            **({"verbose": False} if args.quiet else {}),
+        # In exhaustive_check mode, shots and batching are not used.
+        if bool(getattr(getattr(exp_cfg, "exhaustive_check", None), "enabled", False)):
+            if args.shots is not None or args.shots_per_batch is not None:
+                print("[concatbp] NOTE: --shots/--shots-per-batch are ignored in exhaustive_check mode")
+            if args.workers is not None:
+                print("[concatbp] NOTE: --workers is ignored in exhaustive_check mode")
+            exp_cfg = replace(
+                exp_cfg,
+                **({"verbose": False} if args.quiet else {}),
+            )
+        else:
+            exp_cfg = replace(
+                exp_cfg,
+                **({"shots": int(args.shots)} if args.shots is not None else {}),
+                **({"shots_per_batch": int(args.shots_per_batch)} if args.shots_per_batch is not None else {}),
+                **({"workers": int(args.workers)} if args.workers is not None else {}),
+                **({"verbose": False} if args.quiet else {}),
+            )
+
+    # Exhaustive low-weight check mode (single point).
+    if bool(getattr(getattr(exp_cfg, "exhaustive_check", None), "enabled", False)):
+        from .exhaustive_check import run_exhaustive_check
+        summary = run_exhaustive_check(exp_cfg, dec_cfg)
+        out_dir = Path(exp_cfg.output_dir)
+        print("\n[concatbp] Finished exhaustive_check")
+        print(
+            "[concatbp] "
+            f"d={summary.distance} d2={summary.d2} p={summary.p:.12g} w={summary.weight} "
+            f"patterns={summary.num_patterns} fail={summary.num_fail} abort={summary.num_abort}"
         )
+        print(f"[concatbp] Output Dir: {out_dir}")
+        return
 
     # Execute the core experiment pipeline
     rows = run_threshold_experiment(exp_cfg, dec_cfg)

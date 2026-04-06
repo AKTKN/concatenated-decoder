@@ -9,7 +9,7 @@ from .config import CircuitConfig
 from .path_setup import ensure_local_imports
 
 
-def _build_color_code_stim_noise_model(noise_name: str, p: float):
+def _build_color_code_stim_noise_model(noise_name: str, p: float, args: Optional[dict[str, Any]] = None) -> Any:
 	"""Map concatbp noise names to color-code-stim NoiseModel."""
 	mod = importlib.import_module("color_code_stim")
 	NoiseModel = mod.NoiseModel
@@ -20,13 +20,21 @@ def _build_color_code_stim_noise_model(noise_name: str, p: float):
 	if noise_name in {"code_capacity_depolarizing", "code_capacity"}:
 		return NoiseModel(depol=float(p))
 
+	if noise_name == "custom":
+		kwargs = {} if args is None else dict(args)
+		noise = NoiseModel(**kwargs)
+		# Validate eagerly when available to surface typos early.
+		if hasattr(noise, "validate"):
+			noise.validate()
+		return noise
+
 	if noise_name == "none":
 		return NoiseModel()
 
 	raise ValueError(
 		"Unsupported noise_model for color-code-stim backend: "
 		f"{noise_name}. Supported values: depolarizing, uniform_depolarizing, "
-		"code_capacity_depolarizing, code_capacity, none."
+		"code_capacity_depolarizing, code_capacity, custom, none."
 	)
 
 
@@ -95,9 +103,23 @@ def _build_color_code_stim_circuit(
 	rounds_requested = cfg.resolved_rounds()
 	rounds_effective = rounds_requested
 
-	noise_model = _build_color_code_stim_noise_model(cfg.noise_model, float(p))
-
 	options = dict(cfg.circuit_options)
+	custom_args = None
+	if str(cfg.noise_model).strip().lower() == "custom":
+		# Pass-through kwargs for color-code-stim.NoiseModel(**kwargs).
+		custom_args = options.get("custom_noise_model", options.get("noise_model_args"))
+		if custom_args is None:
+			raise ValueError(
+				"noise_model='custom' requires circuit_options.custom_noise_model (dict of color-code-stim NoiseModel parameters)."
+			)
+		if not isinstance(custom_args, dict):
+			raise ValueError(
+				"circuit_options.custom_noise_model must be a dict when noise_model='custom'. "
+				f"Got type={type(custom_args).__name__}"
+			)
+
+	noise_model = _build_color_code_stim_noise_model(cfg.noise_model, float(p), args=custom_args)
+
 	extra_kwargs = dict(options.get("extra_color_code_kwargs", {}))
 
 	# concatbp-local option names
@@ -179,6 +201,11 @@ def build_circuit(cfg: CircuitConfig, basis: Optional[str], p: float) -> BuiltCi
 	"""
 	source = str(cfg.circuit_from)
 	if source == "chromobius":
+		if str(cfg.noise_model).strip().lower() == "custom":
+			raise ValueError(
+				"noise_model='custom' is only supported with circuit_from='color-code-stim'. "
+				"Chromobius circuit generation does not accept color-code-stim NoiseModel parameters."
+			)
 		# Lazy import to avoid importing chromobius generation deps when unused.
 		from .chromobius_factory import build_chromobius_circuit
 		return build_chromobius_circuit(cfg, basis=basis, p=p)

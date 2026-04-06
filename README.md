@@ -29,6 +29,58 @@ bash scripts/run_memoryexp.sh configs/memory_simulation.json
 
 Outputs go under `concatbp_outputs/` (see the config `experiment.output_dir`).
 
+## Exhaustive low-weight check (naive DEM)
+
+You can run an *exhaustive* logical check over all naive-DEM error-mechanism patterns of a fixed weight.
+
+- Add the following to your JSON config under `experiment`:
+
+```json
+{
+	"experiment": {
+		"distances": [7],
+		"p_values": [0.001],
+		"exhaustive_check": {"enabled": true, "weight": 1}
+	}
+}
+```
+
+Notes:
+- This mode runs a single `(distance, p)` point; set `distances` and `p_values` to 1-element lists.
+- `experiment.shots` (and CLI `--shots`) are ignored.
+- `weight >= 3` can be extremely expensive (combinatorial explosion).
+
+## Custom noise model (color-code-stim only)
+
+When using `experiment.circuit_from: "color-code-stim"`, you can pass custom per-component noise rates
+directly to `color_code_stim.NoiseModel`.
+
+- Set `experiment.noise_model` to `"custom"`
+- Put the NoiseModel kwargs under `experiment.circuit_options.custom_noise_model`
+
+Example:
+
+```json
+{
+	"experiment": {
+		"circuit_from": "color-code-stim",
+		"noise_model": "custom",
+		"circuit_options": {
+			"custom_noise_model": {
+				"cnot": 0.001,
+				"meas": 0.002,
+				"reset": 0.003,
+				"idle": 0.0005
+			}
+		}
+	}
+}
+```
+
+Notes:
+- This is **not supported** for `experiment.circuit_from: "chromobius"` (an error is raised).
+- When `noise_model: "custom"`, the experiment parameter `p` is not used by the NoiseModel (your dict fully specifies rates).
+
 ## PBS (qsub)
 
 Edit parameters in `pbs/memoryexp.pbs` (walltime, cores, config path), then:

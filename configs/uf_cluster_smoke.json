@@ -19,7 +19,7 @@
       "compression": "zstd"
     },
     "basis": "Z",
-    "distances": [3],
+    "distances": [7],
     "p_min": 0.001,
     "p_max": 0.001,
     "num_p": 1,
@@ -27,7 +27,7 @@
     "noise_model": "depolarizing",
     "rounds": "d",
     "convert_to_cz": false,
-    "shots": 20,
+    "shots": 20000,
     "shots_per_batch": 20,
     "seed": 123,
     "output_dir": "concatbp_outputs/_smoke_cluster_stats",

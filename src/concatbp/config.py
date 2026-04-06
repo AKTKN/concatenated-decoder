@@ -11,6 +11,7 @@ NoiseModelName = Literal[
     "none",
     "code_capacity_depolarizing",
     "code_capacity",
+    "custom",
 ]
 
 CircuitSource = Literal["chromobius", "color-code-stim"]
@@ -326,6 +327,36 @@ class ExperimentClusterStatsConfig:
 
 
 @dataclass(frozen=True)
+class ExhaustiveCheckConfig:
+    """Controls the exhaustive low-weight check mode.
+
+    When enabled, the experiment runner enumerates all error-mechanism patterns of a
+    fixed Hamming weight in the naive (monolithic) DEM, decodes them, and reports
+    how many patterns lead to a logical mismatch.
+
+    Notes:
+        - This mode is intended for *small* instances.
+        - `shots` in the main experiment config is ignored.
+    """
+
+    enabled: bool = False
+    weight: int = 1
+
+    @staticmethod
+    def from_any(value: Any) -> "ExhaustiveCheckConfig":
+        if value is None:
+            return ExhaustiveCheckConfig()
+        if isinstance(value, bool):
+            return ExhaustiveCheckConfig(enabled=bool(value))
+        if isinstance(value, dict):
+            return ExhaustiveCheckConfig(
+                enabled=bool(value.get("enabled", True)),
+                weight=int(value.get("weight", 1)),
+            )
+        raise ValueError("exhaustive_check must be a bool or dict")
+
+
+@dataclass(frozen=True)
 class ThresholdExperimentConfig:
     circuit_style: str = "superdense_color_code_{basis}"
     circuit_from: CircuitSource = "chromobius"
@@ -366,6 +397,9 @@ class ThresholdExperimentConfig:
     # Shot-level UF cluster stats output (separate from detailed_stats).
     cluster_stats: ExperimentClusterStatsConfig = field(default_factory=ExperimentClusterStatsConfig)
 
+    # Exhaustive low-weight check mode.
+    exhaustive_check: ExhaustiveCheckConfig = field(default_factory=ExhaustiveCheckConfig)
+
     def resolved_p_values(self) -> np.ndarray:
         if self.p_values is not None:
             return np.asarray(self.p_values, dtype=float)
@@ -388,11 +422,20 @@ class ThresholdExperimentConfig:
         cluster_raw = raw.pop("cluster_stats", None)
         cluster = ExperimentClusterStatsConfig.from_any(cluster_raw)
 
+        exhaustive_raw = raw.pop("exhaustive_check", None)
+        exhaustive = ExhaustiveCheckConfig.from_any(exhaustive_raw)
+
         # Allow legacy naming variants if present.
         if "comparative" in raw and "comparative_decoding" not in raw:
             raw["comparative_decoding"] = bool(raw.pop("comparative"))
 
-        return ThresholdExperimentConfig(**raw, statistics=stats, detailed_stats=detailed, cluster_stats=cluster)
+        return ThresholdExperimentConfig(
+            **raw,
+            statistics=stats,
+            detailed_stats=detailed,
+            cluster_stats=cluster,
+            exhaustive_check=exhaustive,
+        )
 
 @dataclass(frozen=True)
 class ThresholdPoint:
