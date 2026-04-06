@@ -214,6 +214,21 @@ def _safe_log_weights(prob: np.ndarray) -> np.ndarray:
     return np.log((1 - p) / p)
 
 
+def _color_to_code(color: str) -> int:
+    """Map color token to the required integer code.
+
+    Spec: 1=red, 2=blue, 3=green.
+    """
+    c = str(color).strip().lower()
+    if c == "r":
+        return 1
+    if c == "b":
+        return 2
+    if c == "g":
+        return 3
+    return 0
+
+
 @dataclass(frozen=True)
 class DecodeBatchResult:
     """Batch decode result.
@@ -236,6 +251,21 @@ class DecodeBatchResult:
     iterations: np.ndarray | None = None
     detailed_stats: list[dict[str, int | float | str]] | None = None
     abort_mask: np.ndarray | None = None
+
+    # When UF cluster stats are enabled, decoding is performed per-unique syndrome.
+    # `unique_index_by_shot` maps each shot to its unique-syndrome index.
+    unique_index_by_shot: np.ndarray | None = None
+    # Optional UF cluster stats for the selected (min-cost) candidate per unique syndrome.
+    # Each entry is a dict carrying numpy arrays and context (e.g. color/basis/stage).
+    uf_cluster_stats_by_unique: list[dict[str, Any] | None] | None = None
+
+    # Optional UF-derived per-shot metrics (available when decoder_cfg.get_cluster_stats=True).
+    # These are compact scalars intended for persistence (e.g. parquet), not full cluster arrays.
+    selected_color_code: np.ndarray | None = None
+    uf_stage1_max_cluster_syndrome_count: dict[str, np.ndarray] | None = None
+    uf_stage2_max_cluster_syndrome_count: dict[str, np.ndarray] | None = None
+    uf_stage1_max_cluster_llr: dict[str, np.ndarray] | None = None
+    uf_stage2_max_cluster_llr: dict[str, np.ndarray] | None = None
 
 class _BPLSDStageDecoder:
     """Wrapper for the standard BPLSD decoder."""
@@ -360,40 +390,157 @@ class _MatchingStageDecoder:
                         "UnionFindDecoder is not available. Install 'ldpc' (or ensure local src paths are present). "
                         f"Original import error: {_IMPORT_ERROR_LDPC}"
                     )
-                self.decoder = UnionFindDecoder(self.h)
+                # ldpc's UnionFindDecoder API changed across versions:
+                # - older builds: uf_method is bool with a working default
+                # - newer builds (e.g. ldpc>=2.4): uf_method expects a string ('peeling'/'matrix')
+                # Try the legacy constructor first (no behavior change), then fall back to explicit peeling.
+                try:
+                    self.decoder = UnionFindDecoder(self.h)
+                except TypeError:
+                    self.decoder = UnionFindDecoder(self.h, uf_method="peeling")
             else:
                 self.decoder = pymatching.Matching(self.h, error_weights=self.weights)
         else:
             self.decoder = None
     
-    def decode(self, syndrome: np.ndarray, custom_weights: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, float]:
+    def decode(
+        self,
+        syndrome: np.ndarray,
+        custom_weights: np.ndarray | None = None,
+        *,
+        get_cluster_stats: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray, float, dict[str, Any] | None]:
         if self.model.num_errors == 0:
-            return np.zeros(0, dtype=np.uint8), np.zeros(self.model.num_observables, dtype=np.uint8), 0.0
-        
+            return (
+                np.zeros(0, dtype=np.uint8),
+                np.zeros(self.model.num_observables, dtype=np.uint8),
+                0.0,
+                None,
+            )
+
+        uf_stats: dict[str, Any] | None = None
         if self.decoder is None:
             e = np.zeros(self.model.num_errors, dtype=np.uint8)
             cost = 0.0
         else:
             if self.matcher_type == "uf":
+                llr_weights = np.asarray(custom_weights if custom_weights is not None else self.weights, dtype=np.float64).ravel()
                 if custom_weights is not None:
-                    e = np.asarray(self.decoder.decode(syndrome.astype(np.uint8), llrs=custom_weights), dtype=np.uint8)
+                    if get_cluster_stats:
+                        try:
+                            res = self.decoder.decode(
+                                syndrome.astype(np.uint8),
+                                llrs=custom_weights,
+                                get_cluster_stats=True,
+                            )
+                        except TypeError as exc:
+                            raise RuntimeError(
+                                "UnionFindDecoder.decode() in this environment does not support get_cluster_stats. "
+                                "Install/use the patched ldpc from this repo (ldpc_v2_modifiedUF) or a compatible ldpc build."
+                            ) from exc
+                        if isinstance(res, np.ndarray):
+                            # ldpc_v2_modifiedUF returns only the decoding for the zero-syndrome fast-path.
+                            e = np.asarray(res, dtype=np.uint8).ravel()
+                            uf_stats = {
+                                "cluster_syndrome_counts": np.zeros(0, dtype=np.int32),
+                                "cluster_error_indptr": np.zeros(1, dtype=np.int32),
+                                "cluster_error_indices": np.zeros(0, dtype=np.int32),
+                                "decode_time_us": 0,
+                            }
+                        else:
+                            # (decoding, cluster_syndrome_counts, cluster_error_indptr, cluster_error_indices, decode_time_us)
+                            e = np.asarray(res[0], dtype=np.uint8).ravel()
+                            uf_stats = {
+                                "cluster_syndrome_counts": np.asarray(res[1], dtype=np.int32),
+                                "cluster_error_indptr": np.asarray(res[2], dtype=np.int32),
+                                "cluster_error_indices": np.asarray(res[3], dtype=np.int32),
+                                "decode_time_us": int(res[4]),
+                            }
+                    else:
+                        e = np.asarray(
+                            self.decoder.decode(syndrome.astype(np.uint8), llrs=custom_weights),
+                            dtype=np.uint8,
+                        ).ravel()
                     cost = float(np.dot(custom_weights, e))
                 else:
                     # Use model-derived priors by default.
-                    e = np.asarray(self.decoder.decode(syndrome.astype(np.uint8), llrs=self.weights), dtype=np.uint8)
+                    if get_cluster_stats:
+                        try:
+                            res = self.decoder.decode(
+                                syndrome.astype(np.uint8),
+                                llrs=self.weights,
+                                get_cluster_stats=True,
+                            )
+                        except TypeError as exc:
+                            raise RuntimeError(
+                                "UnionFindDecoder.decode() in this environment does not support get_cluster_stats. "
+                                "Install/use the patched ldpc from this repo (ldpc_v2_modifiedUF) or a compatible ldpc build."
+                            ) from exc
+                        if isinstance(res, np.ndarray):
+                            e = np.asarray(res, dtype=np.uint8).ravel()
+                            uf_stats = {
+                                "cluster_syndrome_counts": np.zeros(0, dtype=np.int32),
+                                "cluster_error_indptr": np.zeros(1, dtype=np.int32),
+                                "cluster_error_indices": np.zeros(0, dtype=np.int32),
+                                "decode_time_us": 0,
+                            }
+                        else:
+                            e = np.asarray(res[0], dtype=np.uint8).ravel()
+                            uf_stats = {
+                                "cluster_syndrome_counts": np.asarray(res[1], dtype=np.int32),
+                                "cluster_error_indptr": np.asarray(res[2], dtype=np.int32),
+                                "cluster_error_indices": np.asarray(res[3], dtype=np.int32),
+                                "decode_time_us": int(res[4]),
+                            }
+                    else:
+                        e = np.asarray(
+                            self.decoder.decode(syndrome.astype(np.uint8), llrs=self.weights),
+                            dtype=np.uint8,
+                        ).ravel()
                     cost = float(np.dot(self.weights, e))
+
+                if get_cluster_stats and uf_stats is not None:
+                    counts = np.asarray(
+                        uf_stats.get("cluster_syndrome_counts", np.zeros(0, dtype=np.int32)),
+                        dtype=np.int32,
+                    ).ravel()
+                    indptr = np.asarray(
+                        uf_stats.get("cluster_error_indptr", np.zeros(1, dtype=np.int32)),
+                        dtype=np.int32,
+                    ).ravel()
+                    indices = np.asarray(
+                        uf_stats.get("cluster_error_indices", np.zeros(0, dtype=np.int32)),
+                        dtype=np.int32,
+                    ).ravel()
+
+                    max_syn = int(np.max(counts)) if counts.size else 0
+
+                    max_llr = 0.0
+                    if indptr.size >= 2 and indices.size:
+                        for k in range(int(indptr.size) - 1):
+                            a = int(indptr[k])
+                            b = int(indptr[k + 1])
+                            if a >= b:
+                                s = 0.0
+                            else:
+                                s = float(np.sum(llr_weights[indices[a:b]]))
+                            if s > max_llr:
+                                max_llr = s
+
+                    uf_stats["max_cluster_syndrome_count"] = max_syn
+                    uf_stats["max_cluster_llr"] = float(max_llr)
             else:
                 if custom_weights is not None:
                     # Dynamically re-instantiate matching graph for updated BP priors
                     temp_decoder = pymatching.Matching(self.h, error_weights=custom_weights)
-                    e = np.asarray(temp_decoder.decode(syndrome.astype(bool)), dtype=np.uint8)
+                    e = np.asarray(temp_decoder.decode(syndrome.astype(bool)), dtype=np.uint8).ravel()
                     cost = float(np.dot(custom_weights, e))
                 else:
-                    e = np.asarray(self.decoder.decode(syndrome.astype(bool)), dtype=np.uint8)
+                    e = np.asarray(self.decoder.decode(syndrome.astype(bool)), dtype=np.uint8).ravel()
                     cost = float(np.dot(self.weights, e))
-                    
+
         obs = np.asarray((self.o @ e) % 2, dtype=np.uint8).ravel()
-        return e, obs, cost
+        return e, obs, cost, uf_stats
 
 class _Stage1GraphDecoder:
     """Handles X/Z basis separation and matching for Stage 1."""
@@ -530,6 +677,21 @@ class BaseConcatDecoder(ABC):
         # Optional debug collection for belief_* strategies.
         stage1_bp_failed_unique: dict[str, np.ndarray] = {c: np.zeros(num_unique, dtype=np.uint8) for c in colors}
         stage1_bp_stats_seen = False
+
+        want_uf_stats = bool(getattr(self.cfg, "get_cluster_stats", False))
+        best_uf_stats_unique: list[dict[str, Any] | None] | None = [None] * int(num_unique) if want_uf_stats else None
+
+        selected_color_code_unique: np.ndarray | None = None
+        uf_s1_max_syn_unique: dict[str, np.ndarray] | None = None
+        uf_s2_max_syn_unique: dict[str, np.ndarray] | None = None
+        uf_s1_max_llr_unique: dict[str, np.ndarray] | None = None
+        uf_s2_max_llr_unique: dict[str, np.ndarray] | None = None
+        if want_uf_stats:
+            selected_color_code_unique = np.full(num_unique, 0, dtype=np.int8)
+            uf_s1_max_syn_unique = {c: np.full(num_unique, -1, dtype=np.int32) for c in colors}
+            uf_s2_max_syn_unique = {c: np.full(num_unique, -1, dtype=np.int32) for c in colors}
+            uf_s1_max_llr_unique = {c: np.full(num_unique, np.nan, dtype=np.float64) for c in colors}
+            uf_s2_max_llr_unique = {c: np.full(num_unique, np.nan, dtype=np.float64) for c in colors}
         
         for c in colors:
             s1_cache: dict[bytes, tuple[np.ndarray, np.ndarray, float]] = {}
@@ -559,12 +721,31 @@ class BaseConcatDecoder(ABC):
                     shot_iteration = float(stats["iteration"])  # type: ignore[arg-type]
 
                 all_costs_unique[str(c)][i] = total_cost
+
+                if want_uf_stats and isinstance(stats, dict) and uf_s1_max_syn_unique is not None:
+                    uf = stats.get("uf_cluster_stats")
+                    if isinstance(uf, dict):
+                        s1 = uf.get("stage1")
+                        s2 = uf.get("stage2")
+                        if isinstance(s1, dict):
+                            uf_s1_max_syn_unique[str(c)][i] = int(s1.get("max_cluster_syndrome_count", 0))
+                            assert uf_s1_max_llr_unique is not None
+                            uf_s1_max_llr_unique[str(c)][i] = float(s1.get("max_cluster_llr", 0.0))
+                        if isinstance(s2, dict):
+                            assert uf_s2_max_syn_unique is not None
+                            uf_s2_max_syn_unique[str(c)][i] = int(s2.get("max_cluster_syndrome_count", 0))
+                            assert uf_s2_max_llr_unique is not None
+                            uf_s2_max_llr_unique[str(c)][i] = float(s2.get("max_cluster_llr", 0.0))
                 if total_cost < best_cost_unique[i]:
                     best_cost_unique[i] = total_cost
                     best_obs_unique[i] = obs2
                     best_color_unique[i] = int(color_to_index[str(c)])
+                    if selected_color_code_unique is not None:
+                        selected_color_code_unique[i] = np.int8(_color_to_code(str(c)))
                     if iterations_unique is not None and shot_iteration is not None:
                         iterations_unique[i] = shot_iteration
+                    if want_uf_stats and best_uf_stats_unique is not None:
+                        best_uf_stats_unique[i] = stats.get("uf_cluster_stats") if isinstance(stats, dict) else None
 
         # Aggregate Stage-1 BP non-convergence statistics weighted by shot multiplicity.
         if stage1_bp_stats_seen:
@@ -610,6 +791,21 @@ class BaseConcatDecoder(ABC):
             iterations=iterations,
             detailed_stats=None,
             abort_mask=abort_mask,
+            unique_index_by_shot=inverse if want_uf_stats else None,
+            uf_cluster_stats_by_unique=best_uf_stats_unique,
+            selected_color_code=(selected_color_code_unique[inverse] if selected_color_code_unique is not None else None),
+            uf_stage1_max_cluster_syndrome_count=(
+                {c: uf_s1_max_syn_unique[c][inverse] for c in colors} if uf_s1_max_syn_unique is not None else None
+            ),
+            uf_stage2_max_cluster_syndrome_count=(
+                {c: uf_s2_max_syn_unique[c][inverse] for c in colors} if uf_s2_max_syn_unique is not None else None
+            ),
+            uf_stage1_max_cluster_llr=(
+                {c: uf_s1_max_llr_unique[c][inverse] for c in colors} if uf_s1_max_llr_unique is not None else None
+            ),
+            uf_stage2_max_cluster_llr=(
+                {c: uf_s2_max_llr_unique[c][inverse] for c in colors} if uf_s2_max_llr_unique is not None else None
+            ),
         )
 
     def print_stage1_bp_summary(self, *, tag: str | None = None) -> None:
@@ -805,8 +1001,11 @@ class ConcatBeliefGraphDecoder(BaseConcatDecoder):
         z_matchers = self.fallback_z_matchers[c]
         s1_to_z = self.s1_to_z_s1_map[c]
 
-        stats = {"stage1_bp_failed": 0, "decode_time_ms": 0.0, "stage1_weight": float("nan")}
+        stats: dict[str, Any] = {"stage1_bp_failed": 0, "decode_time_ms": 0.0, "stage1_weight": float("nan")}
         t0 = time.perf_counter()
+        want_uf_stats = bool(getattr(self.cfg, "get_cluster_stats", False)) and self.matcher_type == "uf"
+        uf_stage1: dict[str, Any] | None = None
+        uf_stage2: dict[str, Any] | None = None
 
         # ---------------------------------------------------------
         # STAGE 1: BP Execution
@@ -847,8 +1046,8 @@ class ConcatBeliefGraphDecoder(BaseConcatDecoder):
                 stage1_weights = _belief_matching_weights(z_priors) # MWPM uses cost: -log(p)
 
             syn1_z = syn_base_z[z_models.stage1_input_detectors]
-            e1_z, _, cost1_z = z_matchers["stage1"].decode(
-                syn1_z, custom_weights=stage1_weights
+            e1_z, _, cost1_z, uf_stage1 = z_matchers["stage1"].decode(
+                syn1_z, custom_weights=stage1_weights, get_cluster_stats=want_uf_stats
             )
             stats["stage1_weight"] = float(cost1_z)
 
@@ -858,7 +1057,17 @@ class ConcatBeliefGraphDecoder(BaseConcatDecoder):
         syn2_real_z = syn_base_z[z_models.stage2_real_detectors]
         syn2_z = np.concatenate([syn2_real_z, e1_z], axis=0)
 
-        _, obs_z, cost_z = z_matchers["stage2"].decode(syn2_z)
+        _, obs_z, cost_z, uf_stage2 = z_matchers["stage2"].decode(
+            syn2_z, get_cluster_stats=want_uf_stats
+        )
+
+        if want_uf_stats and (uf_stage1 is not None or uf_stage2 is not None):
+            stats["uf_cluster_stats"] = {
+                "color": str(c),
+                "basis": "Z",
+                "stage1": uf_stage1,
+                "stage2": uf_stage2,
+            }
 
         stats["decode_time_ms"] = (time.perf_counter() - t0) * 1000.0
         return obs_z, cost_z, stats
@@ -986,6 +1195,7 @@ class ConcatGraphDecoder(BaseConcatDecoder):
     """
     def __init__(self, base_model: BinaryErrorModel, detector_ids_by_color: dict[str, list[int]], cfg: DecoderConfig, matcher_type: str, **kwargs):
         super().__init__(base_model, detector_ids_by_color, cfg, **kwargs)
+        self.matcher_type = str(matcher_type).strip().lower()
         if not self.detector_basis_by_id:
             raise ValueError("detector_basis_by_id must be provided for pure Graph decoders.")
 
@@ -1130,6 +1340,11 @@ class ConcatGraphDecoder(BaseConcatDecoder):
 
     def _decode_single_syndrome(self, c: str, syn_global: np.ndarray, s1_cache: dict, s2_cache: dict) -> tuple[np.ndarray, float, dict]:
         t0 = time.perf_counter()
+        want_uf_stats = bool(getattr(self.cfg, "get_cluster_stats", False)) and (
+            str(self.matcher_type).lower() == "uf"
+        )
+        uf_stage1: dict[str, Any] | None = None
+        uf_stage2: dict[str, Any] | None = None
 
         # ---------------------------------------------------------
         # X Basis Pipeline
@@ -1155,13 +1370,17 @@ class ConcatGraphDecoder(BaseConcatDecoder):
         
         # Stage 1 Z
         syn1_z = syn_base_z[self.z_stages[c].stage1_input_detectors]
-        e1_z, _, cost1_z = self.z_matchers[c]["stage1"].decode(syn1_z)
+        e1_z, _, cost1_z, uf_stage1 = self.z_matchers[c]["stage1"].decode(
+            syn1_z, get_cluster_stats=want_uf_stats
+        )
         
         # Stage 2 Z (e1_z aligns perfectly as virtual detectors)
         syn2_real_z = syn_base_z[self.z_stages[c].stage2_real_detectors]
         syn2_z = np.concatenate([syn2_real_z, e1_z.astype(np.uint8)], axis=0)
         
-        _, obs_z, cost_z = self.z_matchers[c]["stage2"].decode(syn2_z)
+        _, obs_z, cost_z, uf_stage2 = self.z_matchers[c]["stage2"].decode(
+            syn2_z, get_cluster_stats=want_uf_stats
+        )
 
         # ---------------------------------------------------------
         # Final Combine
@@ -1169,10 +1388,17 @@ class ConcatGraphDecoder(BaseConcatDecoder):
         final_obs = obs_z
         total_cost = cost_z
 
-        stats = {
+        stats: dict[str, Any] = {
             "stage1_weight": float(cost1_z),
             "decode_time_ms": (time.perf_counter() - t0) * 1000.0,
         }
+        if want_uf_stats and (uf_stage1 is not None or uf_stage2 is not None):
+            stats["uf_cluster_stats"] = {
+                "color": str(c),
+                "basis": "Z",
+                "stage1": uf_stage1,
+                "stage2": uf_stage2,
+            }
         return final_obs, total_cost, stats
 
 class ConcatMatchingDecoder(ConcatGraphDecoder):

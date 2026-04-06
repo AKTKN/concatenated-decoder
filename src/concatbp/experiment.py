@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from dataclasses import replace
 from pathlib import Path
 import os
 import stim
@@ -32,6 +33,7 @@ from .visualization import plot_thresholds
 from .simulation_utils import compute_failure_stats, scale_interval
 from .comparative_decoding import decode_batch_comparative, get_obs_detector_ids_by_obs_index
 from .detailed_stats_writer import ShotStatsParquetWriter, make_detailed_stats_filename
+from .cluster_stats_writer import ClusterStatsParquetWriter, make_cluster_stats_filename
 from ._debug_io import dump_stim_circuit
 
 
@@ -139,8 +141,18 @@ def _run_threshold_task(
     comparative = bool(getattr(cfg, "comparative_decoding", False))
     detailed_stats_cfg = getattr(cfg, "detailed_stats", None)
     detailed_enabled = bool(getattr(detailed_stats_cfg, "enabled", False))
+    cluster_stats_cfg = getattr(cfg, "cluster_stats", None)
+    cluster_enabled = bool(getattr(cluster_stats_cfg, "enabled", False))
 
     strategy_norm = str(decoder_cfg.strategy).strip().lower()
+    if cluster_enabled:
+        if comparative:
+            raise ValueError("experiment.cluster_stats is not supported with experiment.comparative_decoding")
+        if strategy_norm not in {"uf", "unionfind", "union_find", "union-find"}:
+            raise ValueError("experiment.cluster_stats currently supports only decoder.strategy='uf'")
+        if not bool(getattr(decoder_cfg, "get_cluster_stats", False)):
+            # Do not change decoding behavior; only enables extra UF stats collection.
+            decoder_cfg = replace(decoder_cfg, get_cluster_stats=True)
     if comparative:
         if str(cfg.circuit_from) != "color-code-stim":
             raise ValueError("experiment.comparative_decoding requires experiment.circuit_from='color-code-stim'")
@@ -251,6 +263,24 @@ def _run_threshold_task(
             compression=str(getattr(detailed_stats_cfg, "compression", "zstd")),
         )
 
+    cluster_writer: ClusterStatsParquetWriter | None = None
+    if cluster_enabled:
+        out_dir = Path(cfg.output_dir)
+        layout = str(cfg.circuit_options.get("layout", ""))
+        fname = make_cluster_stats_filename(
+            circuit_style=str(built.style),
+            layout=layout,
+            basis=str(cfg.basis),
+            d=int(task.distance),
+            d2=task.d2,
+            p=float(task.p),
+            noise_model=str(cfg.noise_model),
+        )
+        cluster_writer = ClusterStatsParquetWriter(
+            final_path=out_dir / str(getattr(cluster_stats_cfg, "output_subdir", "cluster_stats")) / fname,
+            compression=str(getattr(cluster_stats_cfg, "compression", "zstd")),
+        )
+
     try:
         while processed < cfg.shots:
             n = min(batch_size, cfg.shots - processed)
@@ -309,6 +339,44 @@ def _run_threshold_task(
             np.bitwise_xor(obs_true_u8, obs_pred_u8, out=xor_buf[:n, :])
             mismatch_flags = np.any(xor_buf[:n, :], axis=1)
             mismatch_count += int(np.count_nonzero(mismatch_flags))
+
+            if cluster_writer is not None:
+                if result is None:
+                    raise ValueError("cluster_stats output requires non-comparative decode results")
+
+                def _int_metric(metric_map: dict[str, np.ndarray] | None, color: str) -> np.ndarray:
+                    if metric_map is None or color not in metric_map:
+                        return np.full(n, -1, dtype=np.int32)
+                    return np.asarray(metric_map[color], dtype=np.int32).reshape(-1)[:n]
+
+                def _float_metric(metric_map: dict[str, np.ndarray] | None, color: str) -> np.ndarray:
+                    if metric_map is None or color not in metric_map:
+                        return np.full(n, np.nan, dtype=np.float64)
+                    return np.asarray(metric_map[color], dtype=np.float64).reshape(-1)[:n]
+
+                selected_color = (
+                    np.asarray(result.selected_color_code, dtype=np.int8).reshape(-1)[:n]
+                    if result.selected_color_code is not None
+                    else np.full(n, 0, dtype=np.int8)
+                )
+
+                cols: dict[str, np.ndarray] = {
+                    "shot_index": (processed + np.arange(n, dtype=np.int64)),
+                    "logical_error": mismatch_flags,
+                    "selected_color": selected_color,
+                }
+                for stage, syn_map, llr_map in [
+                    ("s1", result.uf_stage1_max_cluster_syndrome_count, result.uf_stage1_max_cluster_llr),
+                    ("s2", result.uf_stage2_max_cluster_syndrome_count, result.uf_stage2_max_cluster_llr),
+                ]:
+                    cols[f"{stage}_r_max_cluster_syndrome_count"] = _int_metric(syn_map, "r")
+                    cols[f"{stage}_b_max_cluster_syndrome_count"] = _int_metric(syn_map, "b")
+                    cols[f"{stage}_g_max_cluster_syndrome_count"] = _int_metric(syn_map, "g")
+                    cols[f"{stage}_r_max_cluster_llr"] = _float_metric(llr_map, "r")
+                    cols[f"{stage}_b_max_cluster_llr"] = _float_metric(llr_map, "b")
+                    cols[f"{stage}_g_max_cluster_llr"] = _float_metric(llr_map, "g")
+
+                cluster_writer.write_batch(cols)
 
             # Optional post-selection.
             # chromobius strategy intentionally ignores post-selection.
@@ -405,6 +473,8 @@ def _run_threshold_task(
     finally:
         if writer is not None:
             writer.close()
+        if cluster_writer is not None:
+            cluster_writer.close()
 
     if bool(getattr(decoder_cfg, "debug_print_stage1_bp_summary", False)) and hasattr(decoder, "print_stage1_bp_summary"):
         tag = (

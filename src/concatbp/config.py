@@ -169,6 +169,11 @@ class DecoderConfig:
     # Rate limit for per-failure prior debug prints.
     debug_print_stage1_bp_failure_priors_max_prints: int = 2
 
+    # Union-Find decoder option: when True, request per-cluster stats from ldpc's
+    # UnionFindDecoder (decode/decode_batch) and propagate them through concatbp.
+    # This does not change decoding results.
+    get_cluster_stats: bool = False
+
     # Which color hypotheses to evaluate in the two-stage concat decoders.
     # - "all": evaluate all colors in `colors` (default; preserves existing behavior)
     # - ["r"], ["r", "g"], ...: evaluate only those colors and select the min-cost solution.
@@ -298,6 +303,29 @@ class ExperimentDetailedStatsConfig:
 
 
 @dataclass(frozen=True)
+class ExperimentClusterStatsConfig:
+    """Controls shot-level UF cluster stats output from the experiment runner."""
+
+    enabled: bool = False
+    output_subdir: str = "cluster_stats"
+    compression: str = "zstd"
+
+    @staticmethod
+    def from_any(value: Any) -> "ExperimentClusterStatsConfig":
+        if value is None:
+            return ExperimentClusterStatsConfig()
+        if isinstance(value, bool):
+            return ExperimentClusterStatsConfig(enabled=bool(value))
+        if isinstance(value, dict):
+            return ExperimentClusterStatsConfig(
+                enabled=bool(value.get("enabled", True)),
+                output_subdir=str(value.get("output_subdir", "cluster_stats")),
+                compression=str(value.get("compression", "zstd")),
+            )
+        raise ValueError("cluster_stats must be a bool or dict")
+
+
+@dataclass(frozen=True)
 class ThresholdExperimentConfig:
     circuit_style: str = "superdense_color_code_{basis}"
     circuit_from: CircuitSource = "chromobius"
@@ -335,6 +363,9 @@ class ThresholdExperimentConfig:
     # Shot-level detailed stats output (separate from decoder.hybrid_two_stage.detailed_stats).
     detailed_stats: ExperimentDetailedStatsConfig = field(default_factory=ExperimentDetailedStatsConfig)
 
+    # Shot-level UF cluster stats output (separate from detailed_stats).
+    cluster_stats: ExperimentClusterStatsConfig = field(default_factory=ExperimentClusterStatsConfig)
+
     def resolved_p_values(self) -> np.ndarray:
         if self.p_values is not None:
             return np.asarray(self.p_values, dtype=float)
@@ -354,11 +385,14 @@ class ThresholdExperimentConfig:
         detailed_raw = raw.pop("detailed_stats", None)
         detailed = ExperimentDetailedStatsConfig.from_any(detailed_raw)
 
+        cluster_raw = raw.pop("cluster_stats", None)
+        cluster = ExperimentClusterStatsConfig.from_any(cluster_raw)
+
         # Allow legacy naming variants if present.
         if "comparative" in raw and "comparative_decoding" not in raw:
             raw["comparative_decoding"] = bool(raw.pop("comparative"))
 
-        return ThresholdExperimentConfig(**raw, statistics=stats, detailed_stats=detailed)
+        return ThresholdExperimentConfig(**raw, statistics=stats, detailed_stats=detailed, cluster_stats=cluster)
 
 @dataclass(frozen=True)
 class ThresholdPoint:

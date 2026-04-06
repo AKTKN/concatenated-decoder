@@ -145,17 +145,85 @@ def drop_hyperedge_error_mechanisms_from_stage_models(
     This helper keeps the mechanism-to-base mapping lists aligned with the filtered
     mechanism indices.
     """
-    s1, s1_map, _ = drop_hyperedge_error_mechanisms(
+    def _filter_and_remap_stage2_virtual_detectors(
+        stage2_model: BinaryErrorModel,
+        stage2_mech_mapping: list[dict[int, float]],
+        *,
+        num_real_detectors: int,
+        kept_virtual_indices: list[int],
+    ) -> tuple[BinaryErrorModel, list[dict[int, float]]]:
+        kept_set = set(int(v) for v in kept_virtual_indices)
+        virt_remap = {int(old): int(new) for new, old in enumerate(kept_virtual_indices)}
+
+        new_probs: list[float] = []
+        new_dets: list[list[int]] = []
+        new_obs: list[list[int]] = []
+        new_map: list[dict[int, float]] = []
+
+        for p, dets, obs, mapping in zip(
+            stage2_model.probabilities,
+            stage2_model.detector_targets,
+            stage2_model.observable_targets,
+            stage2_mech_mapping,
+        ):
+            drop_mech = False
+            remapped: list[int] = []
+            for d in dets:
+                d_int = int(d)
+                if d_int < num_real_detectors:
+                    remapped.append(d_int)
+                    continue
+
+                old_virtual = d_int - num_real_detectors
+                if old_virtual not in kept_set:
+                    drop_mech = True
+                    break
+                remapped.append(num_real_detectors + virt_remap[old_virtual])
+
+            if drop_mech:
+                continue
+
+            remapped = sorted(set(remapped))
+            if not remapped:
+                continue
+
+            new_probs.append(float(p))
+            new_dets.append(remapped)
+            new_obs.append([int(o) for o in obs])
+            new_map.append(mapping)
+
+        new_model = BinaryErrorModel(
+            num_detectors=int(num_real_detectors + len(kept_virtual_indices)),
+            num_observables=int(stage2_model.num_observables),
+            probabilities=np.asarray(new_probs, dtype=np.float64),
+            detector_targets=new_dets,
+            observable_targets=new_obs,
+        )
+        return new_model, new_map
+
+
+    s1, s1_map, kept_virtual = drop_hyperedge_error_mechanisms(
         models.stage1,
         models.stage1_mech_mapping,
         max_detector_targets=max_detector_targets,
     )
-    s2, s2_map, _ = drop_hyperedge_error_mechanisms(
+    if s1_map is None:
+        raise ValueError("StageModels are expected to carry mech mappings")
+
+    num_real = len(models.stage2_real_detectors)
+    s2_pre, s2_map_pre = _filter_and_remap_stage2_virtual_detectors(
         models.stage2,
         models.stage2_mech_mapping,
+        num_real_detectors=num_real,
+        kept_virtual_indices=list(kept_virtual),
+    )
+
+    s2, s2_map, _ = drop_hyperedge_error_mechanisms(
+        s2_pre,
+        s2_map_pre,
         max_detector_targets=max_detector_targets,
     )
-    if s1_map is None or s2_map is None:
+    if s2_map is None:
         raise ValueError("StageModels are expected to carry mech mappings")
 
     return StageModels(

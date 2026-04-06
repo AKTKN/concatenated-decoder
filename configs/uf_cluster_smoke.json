@@ -1,0 +1,56 @@
+{
+  "experiment": {
+    "circuit_from": "color-code-stim",
+    "circuit_style": "trioptimal_color_code_{basis}",
+    "circuit_options": {
+      "layout": "tri",
+      "superdense": false,
+      "temporal_boundary": "Z",
+      "perfect_state_prep": false,
+      "perfect_final_measurement": false,
+      "perfect_first_round": false,
+      "d2": "d"
+    },
+    "comparative_decoding": false,
+    "detailed_stats": false,
+    "cluster_stats": {
+      "enabled": true,
+      "output_subdir": "cluster_stats",
+      "compression": "zstd"
+    },
+    "basis": "Z",
+    "distances": [3],
+    "p_min": 0.001,
+    "p_max": 0.001,
+    "num_p": 1,
+    "p_scale": "linear",
+    "noise_model": "depolarizing",
+    "rounds": "d",
+    "convert_to_cz": false,
+    "shots": 20,
+    "shots_per_batch": 20,
+    "seed": 123,
+    "output_dir": "concatbp_outputs/_smoke_cluster_stats",
+    "resume": false,
+    "verbose": false,
+    "workers": 1,
+    "plot_ler_unit": "per_round",
+    "plot_x_scale": "linear",
+    "statistics": {
+      "enabled": false,
+      "method": "wilson",
+      "alpha": 0.01
+    }
+  },
+  "decoder": {
+    "strategy": "uf",
+    "colors": ["r", "g", "b"],
+    "color_selection_strategy": "all",
+    "do_post_selection": false,
+    "get_cluster_stats": true,
+    "hybrid_two_stage": {
+      "enabled": false,
+      "detailed_stats": false
+    }
+  }
+}
