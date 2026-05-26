@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CONFIG="${1:-${PROJECT_ROOT}/configs/exhaustive_check.json}"
+CONFIG="${1:-${PROJECT_ROOT}/configs/uf_cluster_smoke.json}"
 SHOTS_OVERRIDE="${2:-}"
 BATCH_OVERRIDE="${3:-}"
 WORKERS_OVERRIDE="${4:-}"
@@ -14,7 +14,7 @@ QUIET_FLAG="${5:-}"
 #   CONCATBP_PYTHON=/path/to/python bash run_concatbp_threshold.sh ...
 PYTHON_CMD="${CONCATBP_PYTHON:-python}"
 
-CMD=("${PYTHON_CMD}" -m concatbp.experiment_cli --config "${CONFIG}")
+CMD=("${PYTHON_CMD}" -m concatbp.runner.cli --config "${CONFIG}")
 if [[ -n "${SHOTS_OVERRIDE}" ]]; then
   CMD+=(--shots "${SHOTS_OVERRIDE}")
 fi

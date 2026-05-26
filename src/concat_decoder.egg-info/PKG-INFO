@@ -1,0 +1,123 @@
+Metadata-Version: 2.4
+Name: concat-decoder
+Version: 0.1.0
+Summary: Concatenated BP-style decoding experiments and utilities (config-driven)
+Author: concat-decoder contributors
+License: Proprietary (set an OSS license before public release)
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: stim
+Provides-Extra: full
+Requires-Dist: pandas; extra == "full"
+Requires-Dist: pyarrow; extra == "full"
+Requires-Dist: matplotlib; extra == "full"
+Requires-Dist: pymatching; extra == "full"
+Requires-Dist: ldpc; extra == "full"
+Requires-Dist: relay-bp; extra == "full"
+Requires-Dist: beliefmatching; extra == "full"
+Requires-Dist: color-code-stim; extra == "full"
+Requires-Dist: chromobius; extra == "full"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: maturin; extra == "dev"
+
+# Concatenated Decoders for color code
+Various concatenated decoding strategy is implemented based on concatenated matching decoder proposed in [Color code decoder with improved scaling for correcting circuit-level noise](https://quantum-journal.org/papers/q-2025-01-27-1609/)
+
+## Quick start (local)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
+
+# Run a small smoke test
+bash scripts/run_memoryexp.sh configs/threshold_postselect_smoke.json 10 10 1 quiet
+```
+
+## Running an experiment
+
+- CLI:
+
+```bash
+PYTHONPATH=src python -m concatbp.experiment_cli --config configs/memory_simulation.json
+```
+
+- Script wrapper (recommended):
+
+```bash
+bash scripts/run_memoryexp.sh configs/memory_simulation.json
+```
+
+Outputs go under `concatbp_outputs/` (see the config `experiment.output_dir`).
+
+## Exhaustive low-weight check (naive DEM)
+
+You can run an *exhaustive* logical check over all naive-DEM error-mechanism patterns of a fixed weight.
+
+- Add the following to your JSON config under `experiment`:
+
+```json
+{
+	"experiment": {
+		"distances": [7],
+		"p_values": [0.001],
+		"exhaustive_check": {"enabled": true, "weight": 1}
+	}
+}
+```
+
+Notes:
+- This mode runs a single `(distance, p)` point; set `distances` and `p_values` to 1-element lists.
+- `experiment.shots` (and CLI `--shots`) are ignored.
+- `weight >= 3` can be extremely expensive (combinatorial explosion).
+
+## Custom noise model (color-code-stim only)
+
+When using `experiment.circuit_from: "color-code-stim"`, you can pass custom per-component noise rates
+directly to `color_code_stim.NoiseModel`.
+
+- Set `experiment.noise_model` to `"custom"`
+- Put the NoiseModel kwargs under `experiment.circuit_options.custom_noise_model`
+
+Example:
+
+```json
+{
+	"experiment": {
+		"circuit_from": "color-code-stim",
+		"noise_model": "custom",
+		"circuit_options": {
+			"custom_noise_model": {
+				"cnot": 0.001,
+				"meas": 0.002,
+				"reset": 0.003,
+				"idle": 0.0005
+			}
+		}
+	}
+}
+```
+
+Notes:
+- This is **not supported** for `experiment.circuit_from: "chromobius"` (an error is raised).
+- When `noise_model: "custom"`, the experiment parameter `p` is not used by the NoiseModel (your dict fully specifies rates).
+
+## PBS (qsub)
+
+Edit parameters in `pbs/memoryexp.pbs` (walltime, cores, config path), then:
+
+```bash
+qsub pbs/memoryexp.pbs
+```
+
+## Notes
+
+- `scripts/*.sh` set `PYTHONPATH=src` so you can run without `pip install -e .`.
+- If you use local checkouts of dependencies (e.g. modified ldpc/chromobius), the code will also try to add them via `concatbp.path_setup.ensure_local_imports()` when present.
+
