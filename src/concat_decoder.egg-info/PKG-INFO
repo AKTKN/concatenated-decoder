@@ -1,3 +1,30 @@
+Metadata-Version: 2.4
+Name: concat-decoder
+Version: 0.1.0
+Summary: Concatenated BP-style decoding experiments and utilities (config-driven)
+Author: concat-decoder contributors
+License: Proprietary (set an OSS license before public release)
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: stim
+Provides-Extra: full
+Requires-Dist: pandas; extra == "full"
+Requires-Dist: pyarrow; extra == "full"
+Requires-Dist: matplotlib; extra == "full"
+Requires-Dist: pymatching; extra == "full"
+Requires-Dist: ldpc; extra == "full"
+Requires-Dist: relay-bp; extra == "full"
+Requires-Dist: beliefmatching; extra == "full"
+Requires-Dist: color-code-stim; extra == "full"
+Requires-Dist: chromobius; extra == "full"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: maturin; extra == "dev"
+
 # Concatenated Decoders for color code
 Various concatenated decoding strategy is implemented based on concatenated matching decoder proposed in [Color code decoder with improved scaling for correcting circuit-level noise](https://quantum-journal.org/papers/q-2025-01-27-1609/)
 

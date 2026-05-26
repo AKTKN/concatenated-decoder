@@ -3,12 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "concatbp"
+name = "concat-decoder"
 version = "0.1.0"
 description = "Concatenated BP-style decoding experiments and utilities (config-driven)"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "concatbp contributors" }]
+authors = [{ name = "concat-decoder contributors" }]
 license = { text = "Proprietary (set an OSS license before public release)" }
 
 # Keep this list conservative; full cluster env is in requirements.txt.
